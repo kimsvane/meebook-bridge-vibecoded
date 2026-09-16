@@ -26,6 +26,7 @@ DEFAULTS = {
     "navigate_urls": [
         "https://app.meebook.com/foraeldre/dashboard/",
         "https://app.meebook.com/foraeldre/arsplaner/",
+        "https://app.meebook.com/foraeldre/ugeplaner/",
     ],
     "refresh_interval_minutes": 15,
     "page_settle_ms": 4000,
@@ -211,6 +212,31 @@ async def save_cookies(ctx):
         json.dump(cookies, f)
 
 
+async def _enhance_data(page):
+    base = CONFIG["meebook_base"]
+
+    def store(path, body):
+        if isinstance(body, (dict, list)):
+            serialized = json.dumps(body, ensure_ascii=False)[:2_000_000]
+            state["resources"][path] = json.loads(serialized)
+
+    try:
+        latest = await page.request.get(base + "/rest/annualplans/latest")
+        if latest.status == 200:
+            body = await latest.json()
+            store(path_of(latest.url), body)
+            for item in body.get("items", []):
+                pid = item.get("id")
+                if pid:
+                    detail = await page.request.get(
+                        base + f"/rest/annualplans/{pid}?include=books%2Cactivities%2Cteacher%2Cstatuses"
+                    )
+                    if detail.status == 200:
+                        store(path_of(detail.url), await detail.json())
+    except Exception:
+        pass
+
+
 async def refresh_job():
     async with job_lock:
         if state["needs_login"]:
@@ -239,6 +265,7 @@ async def refresh_job():
                         return False
                 except Exception:
                     continue
+            await _enhance_data(page)
             await save_cookies(ctx)
             discover_ids_from_resources()
             state["session_valid"] = True

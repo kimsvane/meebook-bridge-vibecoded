@@ -1,5 +1,5 @@
 name: "Meebook Bridge"
-version: "1.0.6"
+version: "1.0.7"
 slug: meebook_bridge
 description: >-
   Læser data fra Meebook (elevplan, lektier, fravær) ind i Home Assistant.
@@ -27,6 +27,7 @@ options:
   navigate_urls:
     - "https://app.meebook.com/foraeldre/dashboard/"
     - "https://app.meebook.com/foraeldre/arsplaner/"
+    - "https://app.meebook.com/foraeldre/ugeplaner/"
   page_settle_ms: 4000
   headless_refresh: true
 schema:
