@@ -6,7 +6,7 @@ description: >-
   Kører en browser (Playwright) i containeren, fanger Meebooks REST-API-svar
   og eksponerer dem som JSON på port 8600 til REST-sensorer.
   Manuel Unilogin/MitID-login sker via VNC på port 5900.
-url: "https://github.com/kim/meebook-bridge"
+url: "https://github.com/kimsvane/meebook-bridge-vibecoded"
 arch:
   - amd64
   - aarch64
