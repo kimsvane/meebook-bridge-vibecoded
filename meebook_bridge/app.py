@@ -153,16 +153,29 @@ async def end_browser(ctx, pw):
 
 def attach_capture(page):
     patterns = CONFIG["capture_patterns"]
+    pending = set()
+
+    async def _capture(resp):
+        try:
+            ctype = resp.headers.get("content-type", "")
+            url = resp.url
+            if "json" in ctype and any(pat in url for pat in patterns):
+                body = await resp.json()
+                if isinstance(body, (dict, list)):
+                    serialized = json.dumps(body, ensure_ascii=False)[:2_000_000]
+                    state["resources"][path_of(url)] = json.loads(serialized)
+        except Exception:
+            pass
 
     def on_response(resp):
         try:
             ctype = resp.headers.get("content-type", "")
             url = resp.url
             if "json" in ctype and any(pat in url for pat in patterns):
-                body = resp.json()
-                if isinstance(body, (dict, list)):
-                    serialized = json.dumps(body, ensure_ascii=False)[:2_000_000]
-                    state["resources"][path_of(url)] = json.loads(serialized)
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(_capture(resp))
+                pending.add(task)
+                task.add_done_callback(pending.discard)
         except Exception:
             pass
 
@@ -275,6 +288,7 @@ async def remote_login_flow():
             state["last_login"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             state["last_error"] = None
             save_state()
+            asyncio.get_running_loop().create_task(refresh_job())
         except Exception as e:
             state["last_error"] = str(e)
         finally:
@@ -409,7 +423,18 @@ load();setInterval(load,15000);
 async def startup():
     load_state()
     global scheduler_task
-    scheduler_task = asyncio.get_running_loop().create_task(scheduler())
+    loop = asyncio.get_running_loop()
+    scheduler_task = loop.create_task(scheduler())
+
+    async def _initial_refresh():
+        await asyncio.sleep(15)
+        try:
+            if not state["needs_login"]:
+                await refresh_job()
+        except Exception:
+            pass
+
+    loop.create_task(_initial_refresh())
 
 
 @app.get("/", response_class=HTMLResponse)
