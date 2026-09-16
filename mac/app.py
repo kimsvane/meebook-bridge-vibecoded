@@ -1,0 +1,303 @@
+import asyncio
+import json
+import re
+import time
+import urllib.parse
+from pathlib import Path
+
+import uvicorn
+import yaml
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from playwright.async_api import async_playwright
+
+BASE_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = BASE_DIR / "bridge-config.yaml"
+STATE_PATH = BASE_DIR / "state.json"
+COOKIE_PATH = BASE_DIR / "cookies.json"
+
+with open(CONFIG_PATH) as f:
+    CONFIG = yaml.safe_load(f)
+
+state = {
+    "session_valid": False,
+    "needs_login": True,
+    "login_in_progress": False,
+    "last_login": None,
+    "last_refresh": None,
+    "last_error": None,
+    "resources": {},
+    "student_ids": [],
+    "year_span_id": None,
+}
+job_lock = asyncio.Lock()
+scheduler_task = None
+
+
+def load_state():
+    try:
+        with open(STATE_PATH) as f:
+            stored = json.load(f)
+        state["student_ids"] = stored.get("student_ids", [])
+        state["year_span_id"] = stored.get("year_span_id")
+    except FileNotFoundError:
+        pass
+
+
+def save_state():
+    with open(STATE_PATH, "w") as f:
+        json.dump(
+            {
+                "session_valid": state["session_valid"],
+                "needs_login": state["needs_login"],
+                "last_login": state["last_login"],
+                "last_refresh": state["last_refresh"],
+                "last_error": state["last_error"],
+                "student_ids": state["student_ids"],
+                "year_span_id": state["year_span_id"],
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+def path_of(url: str) -> str:
+    return urllib.parse.urlparse(url).path
+
+
+def is_login_host(url: str) -> bool:
+    host = urllib.parse.urlparse(url).hostname or ""
+    return any(k in host for k in CONFIG.get("login_hosts", []))
+
+
+async def looks_like_login(page) -> bool:
+    url = page.url
+    if is_login_host(url):
+        return True
+    p = path_of(url)
+    if any(fp in p for fp in CONFIG["logged_in_paths"]):
+        return False
+    try:
+        text = await page.inner_text("body")
+    except Exception:
+        return True
+    low = (text or "").lower()[:2000]
+    return any(h in low for h in CONFIG["login_page_hints"])
+
+
+async def launch_browser(pw, headless):
+    ctx = await pw.chromium.launch_persistent_context(
+        CONFIG["profile_dir"],
+        headless=headless,
+        viewport={"width": 1440, "height": 900},
+        locale="da-DK",
+        args=["--disable-blink-features=AutomationControlled"],
+    )
+    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+    return ctx, page
+
+
+async def end_browser(ctx, pw):
+    if ctx is not None:
+        try:
+            await ctx.close()
+        except Exception:
+            pass
+    if pw is not None:
+        try:
+            await pw.stop()
+        except Exception:
+            pass
+
+
+def attach_capture(page):
+    patterns = CONFIG["capture_patterns"]
+
+    def on_response(resp):
+        try:
+            ctype = resp.headers.get("content-type", "")
+            url = resp.url
+            if "json" in ctype and any(pat in url for pat in patterns):
+                body = resp.json()
+                if isinstance(body, (dict, list)):
+                    serialized = json.dumps(body, ensure_ascii=False)[:2_000_000]
+                    state["resources"][path_of(url)] = json.loads(serialized)
+        except Exception:
+            pass
+
+    page.on("response", on_response)
+
+
+def discover_ids_from_resources():
+    student_ids = set(state["student_ids"])
+    for key in state["resources"]:
+        m = re.search(r"/related/students/(\d+)", key)
+        if m:
+            student_ids.add(int(m.group(1)))
+        for qv in urllib.parse.parse_qsl(urllib.parse.urlparse(key).query):
+            if qv[0] == "studentId" and qv[1].isdigit():
+                student_ids.add(int(qv[1]))
+    if student_ids:
+        state["student_ids"] = sorted(student_ids)
+    if not state["year_span_id"]:
+        for key in state["resources"]:
+            m = re.search(r"/yearSpans/(\d+)", key)
+            if m:
+                state["year_span_id"] = int(m.group(1))
+                break
+            for qv in urllib.parse.parse_qsl(urllib.parse.urlparse(key).query):
+                if qv[0] == "yearSpanId" and qv[1].isdigit():
+                    state["year_span_id"] = int(qv[1])
+                    break
+
+
+async def login_job(show_browser=None):
+    async with job_lock:
+        state["login_in_progress"] = True
+        state["last_error"] = None
+        headless = CONFIG["headless_first_login"] if show_browser is None else not show_browser
+        pw = ctx = page = None
+        try:
+            pw = await async_playwright().start()
+            ctx, page = await launch_browser(pw, headless=headless)
+            attach_capture(page)
+            await page.goto(CONFIG["dashboard_url"], wait_until="domcontentloaded")
+            deadline = time.time() + 15 * 60
+            while time.time() < deadline:
+                await page.wait_for_timeout(2000)
+                try:
+                    if not await looks_like_login(page):
+                        break
+                except Exception:
+                    continue
+            else:
+                state["last_error"] = "Login tidsudløbet"
+                return {"ok": False, "error": state["last_error"]}
+            await page.wait_for_timeout(CONFIG["page_settle_ms"])
+            cookies = await ctx.cookies()
+            with open(COOKIE_PATH, "w") as f:
+                json.dump(cookies, f)
+            state["session_valid"] = True
+            state["needs_login"] = False
+            state["last_login"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            save_state()
+            return {"ok": True}
+        except Exception as e:
+            state["last_error"] = str(e)
+            return {"ok": False, "error": str(e)}
+        finally:
+            state["login_in_progress"] = False
+            await end_browser(ctx, pw)
+
+
+async def refresh_job():
+    async with job_lock:
+        if state["needs_login"]:
+            state["last_error"] = "Kræver login – kør /login først"
+            return False
+        state["last_error"] = None
+        pw = ctx = page = None
+        try:
+            with open(COOKIE_PATH) as f:
+                cookies = json.load(f)
+            pw = await async_playwright().start()
+            ctx, page = await launch_browser(pw, headless=CONFIG["headless_refresh"])
+            if cookies:
+                await ctx.add_cookies(cookies)
+            attach_capture(page)
+            for url in CONFIG["navigate_urls"]:
+                try:
+                    await page.goto(url, wait_until="domcontentloaded")
+                    await page.wait_for_timeout(CONFIG["page_settle_ms"])
+                    if await looks_like_login(page):
+                        state["session_valid"] = False
+                        state["needs_login"] = True
+                        state["last_error"] = "Session udløbet – kør /login"
+                        return False
+                except Exception:
+                    continue
+            updated = await ctx.cookies()
+            with open(COOKIE_PATH, "w") as f:
+                json.dump(updated, f)
+            discover_ids_from_resources()
+            state["session_valid"] = True
+            state["needs_login"] = False
+            state["last_refresh"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            save_state()
+            return True
+        except Exception as e:
+            state["last_error"] = str(e)
+            return False
+        finally:
+            await end_browser(ctx, pw)
+
+
+async def scheduler():
+    while True:
+        await asyncio.sleep(CONFIG["refresh_interval_minutes"] * 60)
+        try:
+            if not state["needs_login"]:
+                await refresh_job()
+        except Exception:
+            pass
+
+
+app = FastAPI(title="Meebook Bridge")
+
+
+@app.on_event("startup")
+async def startup():
+    load_state()
+    global scheduler_task
+    scheduler_task = asyncio.get_running_loop().create_task(scheduler())
+
+
+@app.get("/health")
+async def health():
+    return {
+        "session_valid": state["session_valid"],
+        "needs_login": state["needs_login"],
+        "login_in_progress": state["login_in_progress"],
+        "last_login": state["last_login"],
+        "last_refresh": state["last_refresh"],
+        "last_error": state["last_error"],
+        "student_ids": state["student_ids"],
+        "year_span_id": state["year_span_id"],
+        "resources": sorted(state["resources"].keys()),
+    }
+
+
+@app.post("/login")
+async def login():
+    return await login_job(show_browser=True)
+
+
+@app.post("/refresh")
+async def refresh():
+    return {"ok": await refresh_job()}
+
+
+@app.get("/data")
+async def data():
+    return JSONResponse(state["resources"])
+
+
+@app.get("/data/{key:path}")
+async def data_path(key: str):
+    body = state["resources"].get("/" + key)
+    if body is None:
+        body = state["resources"].get(key)
+    if body is None:
+        matches = {k: v for k, v in state["resources"].items() if "/" + key in k}
+        if matches:
+            return JSONResponse(matches)
+        return JSONResponse(
+            {"error": "Ingen data fundet", "keys": sorted(state["resources"].keys())},
+            status_code=404,
+        )
+    return JSONResponse(body)
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host=CONFIG["host"], port=CONFIG["port"])

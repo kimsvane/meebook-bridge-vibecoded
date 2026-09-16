@@ -1,0 +1,59 @@
+# Meebook Bridge – Home Assistant
+# Kør `python app.py` efter opsætning. Se README i beskeden nedenfor.
+
+meebook_base: https://app.meebook.com
+dashboard_url: https://app.meebook.com/foraeldre/dashboard/
+
+# Sider der skal åbnes under refresh for at trigge API-kald
+# Tilføj flere sider (elevplan, fravær, etc.) for at fange flere endpoints
+navigate_urls:
+  - https://app.meebook.com/foraeldre/dashboard/
+  - https://app.meebook.com/foraeldre/arsplaner/
+
+# Elev-ID og årsplan-ID (find i browser DevTools → Network, når du åbner siden)
+# Bridge finder automatisk nye ID'er under første login – udfyld kun hvis du vil låse
+student_ids: []
+year_span_id: null
+
+# Hvor ofte skal sessionen fornyes og data hentes (i minutter)
+refresh_interval_minutes: 15
+
+# Ventetid (ms) efter sideindlæsning, før API-svar fanges
+page_settle_ms: 4000
+
+# Første login: vis browser (brugeren logger ind manuelt via Unilogin/MitID)
+# Herefter kører refresh headless med gemte cookies
+headless_first_login: false
+headless_refresh: true
+
+# Browser-profil gemmer cookies/localStorage for genbrug
+profile_dir: ./profile
+
+# Hvilke API-endpoints skal fanges (URL-mønstre)
+capture_patterns:
+  - /rest/
+  - /api/
+  - /graphql
+
+# Login-detektion: hvilke værter/URLs betyder "ikke logget ind"
+login_hosts:
+  - broker.unilogin.dk
+  - unilogin
+  - mitid
+  - idp.
+
+# Logget-ind-detektion: hvilke stier betyder "logget ind"
+logged_in_paths:
+  - /foraeldre
+  - /dashboard
+
+# Login-side tekst-nøgleord (nedsat browser med login-side viser disse)
+login_page_hints:
+  - log ind
+  - unilogin
+  - log på
+  - personale/elev/forælder
+
+# Server
+host: 0.0.0.0
+port: 8600

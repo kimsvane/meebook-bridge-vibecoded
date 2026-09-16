@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+profile/
+cookies.json
+state.json
+mac/profile/
+mac/cookies.json
+mac/state.json
+.DS_Store
