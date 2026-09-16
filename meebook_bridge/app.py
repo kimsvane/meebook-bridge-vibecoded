@@ -7,9 +7,8 @@ import urllib.parse
 from pathlib import Path
 
 import uvicorn
-import yaml
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import Body, FastAPI
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from playwright.async_api import async_playwright
 
 BASE_DIR = Path(os.environ.get("BRIDGE_BASE", "/app"))
@@ -17,6 +16,9 @@ DATA_DIR = Path(os.environ.get("BRIDGE_DATA", "/data"))
 PROFILE_DIR = DATA_DIR / "profile"
 STATE_PATH = DATA_DIR / "state.json"
 COOKIE_PATH = DATA_DIR / "cookies.json"
+
+VIEW_W = 1440
+VIEW_H = 900
 
 DEFAULTS = {
     "meebook_base": "https://app.meebook.com",
@@ -37,10 +39,6 @@ DEFAULTS = {
 
 def load_config():
     cfg = dict(DEFAULTS)
-    cfg_path = BASE_DIR / "bridge-config.yaml"
-    if cfg_path.exists():
-        with open(cfg_path) as f:
-            cfg.update({k: v for k, v in yaml.safe_load(f).items() if v is not None})
     if Path("/data/options.json").exists():
         with open("/data/options.json") as f:
             opts = json.load(f)
@@ -64,6 +62,14 @@ state = {
     "year_span_id": None,
 }
 job_lock = asyncio.Lock()
+
+login_view = {
+    "page": None,
+    "snapshot": None,
+    "loop_running": False,
+}
+
+snapshot_lock = asyncio.Lock()
 scheduler_task = None
 
 
@@ -124,7 +130,7 @@ async def launch_browser(pw, headless):
     ctx = await pw.chromium.launch_persistent_context(
         str(PROFILE_DIR),
         headless=headless,
-        viewport={"width": 1440, "height": 900},
+        viewport={"width": VIEW_W, "height": VIEW_H},
         locale="da-DK",
         args=["--disable-blink-features=AutomationControlled"],
     )
@@ -186,42 +192,10 @@ def discover_ids_from_resources():
                     break
 
 
-async def login_job():
-    async with job_lock:
-        state["login_in_progress"] = True
-        state["last_error"] = None
-        pw = ctx = page = None
-        try:
-            pw = await async_playwright().start()
-            ctx, page = await launch_browser(pw, headless=False)
-            attach_capture(page)
-            await page.goto(CONFIG["dashboard_url"], wait_until="domcontentloaded")
-            deadline = time.time() + 15 * 60
-            while time.time() < deadline:
-                await page.wait_for_timeout(2000)
-                try:
-                    if not await looks_like_login(page):
-                        break
-                except Exception:
-                    continue
-            else:
-                state["last_error"] = "Login tidsudløbet"
-                return {"ok": False, "error": state["last_error"]}
-            await page.wait_for_timeout(CONFIG["page_settle_ms"])
-            cookies = await ctx.cookies()
-            with open(COOKIE_PATH, "w") as f:
-                json.dump(cookies, f)
-            state["session_valid"] = True
-            state["needs_login"] = False
-            state["last_login"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-            save_state()
-            return {"ok": True}
-        except Exception as e:
-            state["last_error"] = str(e)
-            return {"ok": False, "error": str(e)}
-        finally:
-            state["login_in_progress"] = False
-            await end_browser(ctx, pw)
+async def save_cookies(ctx):
+    cookies = await ctx.cookies()
+    with open(COOKIE_PATH, "w") as f:
+        json.dump(cookies, f)
 
 
 async def refresh_job():
@@ -252,9 +226,7 @@ async def refresh_job():
                         return False
                 except Exception:
                     continue
-            updated = await ctx.cookies()
-            with open(COOKIE_PATH, "w") as f:
-                json.dump(updated, f)
+            await save_cookies(ctx)
             discover_ids_from_resources()
             state["session_valid"] = True
             state["needs_login"] = False
@@ -265,6 +237,50 @@ async def refresh_job():
             state["last_error"] = str(e)
             return False
         finally:
+            await end_browser(ctx, pw)
+
+
+async def remote_login_flow():
+    async with job_lock:
+        state["login_in_progress"] = True
+        state["last_error"] = None
+        login_view["loop_running"] = True
+        pw = ctx = page = None
+        try:
+            pw = await async_playwright().start()
+            ctx, page = await launch_browser(pw, headless=True)
+            attach_capture(page)
+            login_view["page"] = page
+            await page.goto(CONFIG["dashboard_url"], wait_until="domcontentloaded")
+            deadline = time.time() + 15 * 60
+            logged_in = False
+            while time.time() < deadline:
+                await page.wait_for_timeout(700)
+                try:
+                    snap = await page.screenshot(type="jpeg", quality=65)
+                    async with snapshot_lock:
+                        login_view["snapshot"] = snap
+                    if not await looks_like_login(page):
+                        logged_in = True
+                        break
+                except Exception:
+                    break
+            if not logged_in:
+                state["last_error"] = "Login tidsudløbet"
+                return
+            await page.wait_for_timeout(CONFIG["page_settle_ms"])
+            await save_cookies(ctx)
+            state["session_valid"] = True
+            state["needs_login"] = False
+            state["last_login"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            state["last_error"] = None
+            save_state()
+        except Exception as e:
+            state["last_error"] = str(e)
+        finally:
+            state["login_in_progress"] = False
+            login_view["page"] = None
+            login_view["loop_running"] = False
             await end_browser(ctx, pw)
 
 
@@ -280,23 +296,90 @@ async def scheduler():
 
 app = FastAPI(title="Meebook Bridge")
 
-PAGE_HTML = """<!doctype html>
+REMOTE_HTML = """<!doctype html>
+<html lang="da"><head><meta charset="utf-8"><title>Meebook - login</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:1rem;background:#111;color:#eee}
+#wrap{position:relative;display:inline-block;max-width:100%}
+#shot{max-width:100%;border:1px solid #333;border-radius:8px;display:block;background:#000}
+#cursor{position:absolute;width:14px;height:14px;border:2px solid #f00;border-radius:50%;pointer-events:none;transform:translate(-50%,-50%);display:none}
+.bar{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap;align-items:center}
+button,input,select{background:#1a1a1a;color:#eee;border:1px solid #444;border-radius:6px;padding:7px 12px}
+button{background:#0a7;border-color:#0a7;cursor:pointer}
+button:disabled{opacity:.4}
+#txt{flex:1;min-width:180px}
+.status{color:#8c8;margin-left:auto}
+</style></head><body>
+<div class="bar">
+  <button id="start" onclick="start()">Start login</button>
+  <input id="txt" placeholder="Skriv tekst (fx MitID-navn)">
+  <button onclick="typeText()">Skriv tekst</button>
+  <button onclick="press('Enter')">Enter</button>
+  <button onclick="press('Tab')">Tab</button>
+  <button onclick="press('Escape')">Esc</button>
+  <select id="scrollsel"><option value="0">Scroll...</option><option value="-400">Op</option><option value="400">Ned</option></select>
+  <span id="st" class="status">Ikke aktiv</span>
+</div>
+<div id="wrap"><img id="shot" alt="Meebook login"><div id="cursor"></div></div>
+<script>
+var W=1440, H=900, poll=true;
+function st(t){document.getElementById('st').textContent=t;}
+async function start(){
+  st('Starter...');
+  await fetch('/login',{method:'POST'});
+  poll=true; loadShot();
+}
+function scaleXY(e){
+  var img=document.getElementById('shot'), r=img.getBoundingClientRect();
+  return {x:Math.round((e.clientX-r.left)*(W/r.width)), y:Math.round((e.clientY-r.top)*(H/r.height))};
+}
+document.getElementById('shot').addEventListener('click', async function(e){
+  var c=scaleXY(e); var cur=document.getElementById('cursor');
+  var r=this.getBoundingClientRect();
+  cur.style.display='block';
+  cur.style.left=(c.x*(r.width/W))+'px'; cur.style.top=(c.y*(r.height/H))+'px';
+  await fetch('/input/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(c)});
+});
+async function typeText(){
+  var t=document.getElementById('txt').value;
+  if(!t)return; await fetch('/input/type',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
+}
+async function press(k){await fetch('/input/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})});}
+document.getElementById('txt').addEventListener('keydown',function(e){if(e.key==='Enter')typeText();});
+document.getElementById('scrollsel').addEventListener('change', async function(){
+  if(this.value){await fetch('/input/scroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({y:parseInt(this.value)})});this.value='0';}
+});
+function loadShot(){
+  if(!poll)return;
+  fetch('/snapshot?t='+Date.now()).then(function(r){
+    if(!r.ok){st('Ingen aktiv login');return;}
+    return r.blob();
+  }).then(function(b){
+    if(!b)return;
+    var u=URL.createObjectURL(b);
+    var img=document.getElementById('shot');
+    img.onload=function(){URL.revokeObjectURL(u);}; img.src=u;
+    st('Login i gang...');
+  }).catch(function(e){st('Fejl: '+e);}).finally(function(){setTimeout(loadShot,900);});
+}
+loadShot();
+</script></body></html>"""
+
+MAIN_HTML = """<!doctype html>
 <html lang="da"><head><meta charset="utf-8"><title>Meebook Bridge</title>
 <style>
 body{font-family:system-ui,sans-serif;margin:2rem;background:#111;color:#eee}
 h1{font-size:1.4rem}code{background:#222;padding:2px 5px;border-radius:4px}
 table{border-collapse:collapse;width:100%}td,th{border:1px solid #333;padding:6px 8px;text-align:left}
 button{background:#0a7;color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;margin-right:6px}
-button:disabled{opacity:.4;cursor:default}
-.alert{background:#a30;padding:8px 12px;border-radius:6px;margin:8px 0}.ok{background:#083}
+.alert{background:#a30;padding:8px 12px;border-radius:6px}.ok{background:#083}
 </style></head><body>
 <h1>Meebook Bridge</h1>
-<button id="login" onclick="go('/login')">Login (ny MitID-godkendelse)</button>
-<button id="refresh" onclick="go('/refresh')">Opdater nu</button>
+<a id="loginbtn" href="/remote"><button>Login (indlejret browser)</button></a>
+<a href="/data"><button>Se data (JSON)</button></a>
 <div id="msg"></div>
 <div id="health">Henter status...</div>
 <script>
-async function go(p){document.querySelectorAll('button').forEach(b=>b.disabled=true);const r=await fetch(p,{method:'POST'});document.getElementById('msg').textContent='Svar: '+JSON.stringify(await r.json());}
 async function load(){const r=await fetch('/health');const h=await r.json();
 document.getElementById('health').innerHTML=
 '<table><tr><th>Besked</th><th>Værdi</th></tr>'+
@@ -307,8 +390,7 @@ document.getElementById('health').innerHTML=
 '<tr><td>Fejl</td><td>'+h.last_error+'</td></tr>'+
 '<tr><td>Elev-ID</td><td>'+h.student_ids.join(', ')+'</td></tr>'+
 '<tr><td>Årsplan-ID</td><td>'+h.year_span_id+'</td></tr>'+
-'</table><h3>Fangede API-endpoints ('+h.resources.length+')</h3><ul>'+h.resources.slice(0,60).map(k=>'<li><code>'+k+'</code> <a href="/data'+k+'">se data</a></li>').join('')+'</ul>'+
-'<p><em>Adgang til data: </em>fjernadgang via port 8600 - fx <code>http://&lt;HA-IP&gt;:8600/data/rest/annualplans</code>.</p>';
+'</table><h3>Fangede API-endpoints ('+h.resources.length+')</h3><ul>'+h.resources.slice(0,60).map(k=>'<li><code>'+k+'</code> <a href="/data'+k+'">se data</a></li>').join('')+'</ul>';
 }
 load();setInterval(load,15000);
 </script></body></html>"""
@@ -323,7 +405,12 @@ async def startup():
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return PAGE_HTML
+    return MAIN_HTML
+
+
+@app.get("/remote", response_class=HTMLResponse)
+async def remote():
+    return REMOTE_HTML
 
 
 @app.get("/health")
@@ -343,12 +430,88 @@ async def health():
 
 @app.post("/login")
 async def login():
-    return await login_job()
+    if state["login_in_progress"]:
+        return {"ok": False, "error": "Login er allerede i gang"}
+    asyncio.get_running_loop().create_task(remote_login_flow())
+    return {"ok": True}
 
 
 @app.post("/refresh")
 async def refresh():
     return {"ok": await refresh_job()}
+
+
+@app.get("/login/status")
+async def login_status():
+    return {
+        "running": state["login_in_progress"],
+        "loop": login_view["loop_running"],
+        "viewport": {"width": VIEW_W, "height": VIEW_H},
+    }
+
+
+@app.get("/snapshot")
+async def snapshot():
+    async with snapshot_lock:
+        data = login_view["snapshot"]
+    if data is None:
+        return JSONResponse({"error": "Ingen aktiv login-session"}, status_code=404)
+    return Response(content=data, media_type="image/jpeg")
+
+
+async def require_login_page():
+    page = login_view["page"]
+    if page is None:
+        return None
+    return page
+
+
+@app.post("/input/click")
+async def input_click(payload: dict = Body(...)):
+    page = await require_login_page()
+    if page is None:
+        return JSONResponse({"error": "Ingen aktiv login-session"}, status_code=400)
+    try:
+        await page.mouse.click(int(payload["x"]), int(payload["y"]))
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/input/type")
+async def input_type(payload: dict = Body(...)):
+    page = await require_login_page()
+    if page is None:
+        return JSONResponse({"error": "Ingen aktiv login-session"}, status_code=400)
+    try:
+        await page.keyboard.type(str(payload.get("text", "")), delay=30)
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/input/key")
+async def input_key(payload: dict = Body(...)):
+    page = await require_login_page()
+    if page is None:
+        return JSONResponse({"error": "Ingen aktiv login-session"}, status_code=400)
+    try:
+        await page.keyboard.press(str(payload.get("key", "")))
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/input/scroll")
+async def input_scroll(payload: dict = Body(...)):
+    page = await require_login_page()
+    if page is None:
+        return JSONResponse({"error": "Ingen aktiv login-session"}, status_code=400)
+    try:
+        await page.mouse.wheel(0, int(payload.get("y", 0)))
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
 
 @app.get("/data")

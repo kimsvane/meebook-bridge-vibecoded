@@ -7,42 +7,41 @@ Home Assistant REST-sensorer.
 
 ## Installation
 
-### Lokal add-on (ingen GitHub/HACS nødvendig)
+### Via GitHub-repo
 
-1. Kopiér hele denne mappe til din Home Assistant-installation under
-   `/addons/meebook_bridge/` (fx via Samba/share).
-2. Gå til **Indstillinger → Tilføjelsesprogrammer (Add-ons)** → **Tilføjelsesbutik**.
-3. Klik de tre prikker øverst højre → **Repositories** → tilføj `local` og klik **Tilføj**.
-4. Find **Meebook Bridge** i listen → **Installer** (containeren bygges automatisk,
+1. Supervisor → Tilføjelsesbutik → ⋮ → **Repositories** →
+   `https://github.com/kimsvane/meebook-bridge-vibecoded`
+2. Find **Meebook Bridge** → **Installer** (containeren bygges automatisk,
    kan tage et par minutter) → **Start**.
 
-### Via GitHub-repo (samme flow, bare online)
+### Lokal add-on (uden GitHub)
 
-1. Tilføj repo-URL'en `https://github.com/kimsvane/meebook-bridge-vibecoded`
-   i Supervisor → Butik → tre prikker → **Repositories**.
-2. Repoen har `repository.yaml` i roden, og selve add-on'et ligger i
-   undermappen `meebook_bridge/` – præcis som supervisor kræver.
-3. Find **Meebook Bridge** i listen → **Installer** → **Start**.
+1. Kopiér mappen `meebook_bridge/` til `/addons/meebook_bridge/` på HA'ens
+   configuration (fx via Samba).
+2. Supervisor → Tilføjelsesbutik → ⋮ → **Repositories** → tilføj `local`.
+3. Find **Meebook Bridge** → **Installer** → **Start**.
 
 > HACS er ikke nødvendigt – HACS er til integrationer. Add-ons installeres
 > via Supervisor, lokalt eller fra et repo.
 
-## Første login (Unilogin/MitID)
+## Første login (indlejret, ingen VNC)
 
-Bridgen skal logge ind én gang manuelt. Browseren kører i containeren på en
-virtuel skærm, så du åbner den via VNC:
+Den nødvendige manuelle Unilogin/MitID-godkendelse sker helt i
+add-on'ets web-interface:
 
-1. Forbind til VNC på HA'en: `vnc://<HA-IP>:5900` (fx via Screen Sharing-appen).
-   Hvis du har sat `vnc_password`, tastes den.
-2. Tryk **Login (ny MitID-godkendelse)** i add-on'ets web-interface (åbnes fra
-   assistentens sidepanel), eller kør `POST /login`.
-3. Udfør login-flowet (Unilogin → MitID → godkend i MitID-appen).
-4. Derefter fornyer add-on'en selv sessionen hver `refresh_interval_minutes`
-   og fanger dataene – ingen VNC nødvendig før næste sessionudløb.
+1. Åbn add-on'et fra assistentens sidepanel.
+2. Klik **Login (indlejret browser)**. En headless browser i containeren
+   åbner Meebook-login, og du ser siden live i web-UI'et som skærmbillede -
+   klik og tast i sidepanelet, som var det din egen browser
+   (skriv fx CPR/MitID-navn i feltet, klik i Unilogin-flowet).
+3. Godkend i MitID-appen (husk også at klikke/bekræfte i UI'et hvis nødvendigt).
+4. Når du har ramt dashboardet, gemmer add-on'en sessionen automatisk.
+   Derefter fornyer den selv sessionen hvert `refresh_interval_minutes` og
+   fanger dataene - ingen login nødvendig før næste sessionudløb.
 
 Tip: Har du allerede logget ind med `mac/`-versionen, kan du kopiere dens
-`profile/`- og `cookies.json` ind på HA'ens `/addons/meebook_bridge/data/`
-og springe VNC-login over.
+`profile/` og `cookies.json` ind på HA'ens
+`/addons/meebook_bridge/data/` og springe login'et over.
 
 ## Home Assistant-sensorer
 
@@ -75,14 +74,16 @@ elev-ID og årsplan-ID automatisk.
 | `navigate_urls` | Sider browseren besøger for at udløse API-kald |
 | `page_settle_ms` | Ventetid efter sideindlæsning før svar fanges |
 | `headless_refresh` | Refresh kører uden skærm (anbefalet) |
-| `vnc_password` | Adgangskode til VNC-login (tom = ingen kode) |
 
 ## API
 
 | Endpoint | Beskrivelse |
 |---|---|
 | `GET /health` | Status (session, sidste login, ids, endpoints) |
-| `POST /login` | Starter manuel MitID-login (browser på VNC-skærmen) |
+| `POST /login` | Starter indlejret MitID-login (se `/remote`) |
+| `GET /remote` | Web-UI med live-skærmbillede + input-videresendelse |
+| `GET /snapshot` | Seneste login-skærmbillede (JPEG) |
+| `POST /input/click` · `/input/type` · `/input/key` · `/input/scroll` | Styr login-browseren |
 | `POST /refresh` | Hent data nu |
 | `GET /data` | Alle fangede REST-svar som JSON |
 | `GET /data/rest/...` | Et enkelt fanget endpoint |
@@ -90,5 +91,5 @@ elev-ID og årsplan-ID automatisk.
 ## Filer
 
 - `config.yaml` / `Dockerfile` / `run.sh` / `app.py` / `requirements.txt` – selve add-on'et
+- `repository.yaml` / `README.md` – repo-layoutet (add-on ligger i `meebook_bridge/`)
 - `mac/` – samme bridge, kørbar direkte på en Mac (kræver ikke HA)
->>>>>>> 3ceab38 (Meebook Bridge: HA add-on med Playwright-session og REST-data)

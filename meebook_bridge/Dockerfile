@@ -1,13 +1,9 @@
 FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
 
 LABEL \
-    io.hass.version="1.0.2" \
+    io.hass.version="1.0.3" \
     io.hass.type="addon" \
     io.hass.arch="aarch64|amd64"
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends xvfb x11vnc \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .
