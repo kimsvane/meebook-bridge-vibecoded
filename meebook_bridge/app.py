@@ -296,6 +296,15 @@ async def scheduler():
 
 app = FastAPI(title="Meebook Bridge")
 
+
+@app.middleware("http")
+async def collapse_slashes(request, call_next):
+    path = request.url.path
+    if "//" in path:
+        request.scope["path"] = re.sub(r"/{2,}", "/", path)
+    return await call_next(request)
+
+
 REMOTE_HTML = """<!doctype html>
 <html lang="da"><head><meta charset="utf-8"><title>Meebook - login</title>
 <style>
@@ -326,7 +335,7 @@ var W=1440, H=900, poll=true;
 function st(t){document.getElementById('st').textContent=t;}
 async function start(){
   st('Starter...');
-  await fetch('/login',{method:'POST'});
+  await fetch('login',{method:'POST'});
   poll=true; loadShot();
 }
 function scaleXY(e){
@@ -338,20 +347,20 @@ document.getElementById('shot').addEventListener('click', async function(e){
   var r=this.getBoundingClientRect();
   cur.style.display='block';
   cur.style.left=(c.x*(r.width/W))+'px'; cur.style.top=(c.y*(r.height/H))+'px';
-  await fetch('/input/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(c)});
+  await fetch('input/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(c)});
 });
 async function typeText(){
   var t=document.getElementById('txt').value;
-  if(!t)return; await fetch('/input/type',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
+  if(!t)return; await fetch('input/type',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
 }
-async function press(k){await fetch('/input/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})});}
+async function press(k){await fetch('input/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})});}
 document.getElementById('txt').addEventListener('keydown',function(e){if(e.key==='Enter')typeText();});
 document.getElementById('scrollsel').addEventListener('change', async function(){
-  if(this.value){await fetch('/input/scroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({y:parseInt(this.value)})});this.value='0';}
+  if(this.value){await fetch('input/scroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({y:parseInt(this.value)})});this.value='0';}
 });
 function loadShot(){
   if(!poll)return;
-  fetch('/snapshot?t='+Date.now()).then(function(r){
+  fetch('snapshot?t='+Date.now()).then(function(r){
     if(!r.ok){st('Ingen aktiv login');return;}
     return r.blob();
   }).then(function(b){
@@ -375,12 +384,12 @@ button{background:#0a7;color:#fff;border:0;padding:8px 14px;border-radius:6px;cu
 .alert{background:#a30;padding:8px 12px;border-radius:6px}.ok{background:#083}
 </style></head><body>
 <h1>Meebook Bridge</h1>
-<a id="loginbtn" href="/remote"><button>Login (indlejret browser)</button></a>
-<a href="/data"><button>Se data (JSON)</button></a>
+<a id="loginbtn" href="remote"><button>Login (indlejret browser)</button></a>
+<a href="data"><button>Se data (JSON)</button></a>
 <div id="msg"></div>
 <div id="health">Henter status...</div>
 <script>
-async function load(){const r=await fetch('/health');const h=await r.json();
+async function load(){const r=await fetch('health');const h=await r.json();
 document.getElementById('health').innerHTML=
 '<table><tr><th>Besked</th><th>Værdi</th></tr>'+
 '<tr><td>Session gyldig</td><td>'+(h.session_valid?'<span class="ok">Ja</span>':'<span class="alert">Nej</span>')+'</td></tr>'+
@@ -390,7 +399,7 @@ document.getElementById('health').innerHTML=
 '<tr><td>Fejl</td><td>'+h.last_error+'</td></tr>'+
 '<tr><td>Elev-ID</td><td>'+h.student_ids.join(', ')+'</td></tr>'+
 '<tr><td>Årsplan-ID</td><td>'+h.year_span_id+'</td></tr>'+
-'</table><h3>Fangede API-endpoints ('+h.resources.length+')</h3><ul>'+h.resources.slice(0,60).map(k=>'<li><code>'+k+'</code> <a href="/data'+k+'">se data</a></li>').join('')+'</ul>';
+'</table><h3>Fangede API-endpoints ('+h.resources.length+')</h3><ul>'+h.resources.slice(0,60).map(k=>'<li><code>'+k+'</code> <a href="data'+k+'">se data</a></li>').join('')+'</ul>';
 }
 load();setInterval(load,15000);
 </script></body></html>"""
