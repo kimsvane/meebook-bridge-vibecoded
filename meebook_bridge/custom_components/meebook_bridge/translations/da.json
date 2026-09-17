@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meebook Bridge",
+        "description": "Angiv adresse og port for Meebook Bridge add-on'en. Standard er hassio.local:8600 – brug din HA's LAN-IP (fx 192.168.1.10), hvis hassio.local ikke virker.",
+        "data": {
+          "host": "Værtsnavn / IP",
+          "port": "Port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunne ikke forbinde til add-on'en. Tjek at den kører, og at værtsnavn/port er korrekt."
+    }
+  }
+}

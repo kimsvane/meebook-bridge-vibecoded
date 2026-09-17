@@ -45,7 +45,27 @@ Tip: Har du allerede logget ind med `mac/`-versionen, kan du kopiere dens
 
 ## Home Assistant-sensorer
 
-### Automatisk via MQTT-discovery (anbefalet)
+### Anbefalet: Custom integration (entuelt mod Z2M-stil)
+
+Add-on'en installerer automatisk en **custom integration** i
+`/config/custom_components/meebook_bridge/` ved opstart. Sådan aktiveres den:
+
+1. **Genstart Home Assistant** (Indstillinger → System → Genstart) – ikke kun add-on'en –
+   så HA læser den nye integration.
+2. Indstillinger → Enheder & tjenester → **Tilføj integration** → søg efter
+   **Meebook Bridge**.
+3. Angiv værtsnavn/port (standard `hassio.local:8600`). Virker `hassio.local`
+   ikke, så brug din HA's LAN-IP (fx `192.168.1.10`).
+4. Integrationen opretter så **én sensor pr. fanget endpoint** (fx
+   `sensor.meebook_annualplans_latest`, `sensor.meebook_notifications` osv.)
+   under énheden **Meebook**. Værdien er en kort sammenfatning (fx
+   "2A – Matematik"), og alle JSON-værdierne ligger som **attributter**
+   – inkl. den rå JSON i attributten `json`.
+
+Da der automatisk oprettes en sensor, hver gang add-on'en fanger et nyt
+endpoint, kan du se alle tilgængelige felter direkte på enheden.
+
+### Automatisk via MQTT-discovery
 
 Installér **Mosquitto broker**-add-on'en én gang. Så opretter Meebook Bridge
 automatisk disse sensorer i Home Assistant (ingen YAML nødvendig):

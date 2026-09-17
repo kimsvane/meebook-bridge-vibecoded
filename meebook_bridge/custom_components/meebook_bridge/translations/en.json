@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Meebook Bridge",
+        "description": "Enter the host and port of the Meebook Bridge add-on. Default is hassio.local:8600 – use your Home Assistant LAN IP (e.g. 192.168.1.10) if hassio.local does not resolve.",
+        "data": {
+          "host": "Host / IP",
+          "port": "Port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the add-on. Check that it is running and that host/port are correct."
+    }
+  }
+}
