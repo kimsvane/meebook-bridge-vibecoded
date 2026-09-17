@@ -35,6 +35,7 @@ DEFAULTS = {
         "https://app.meebook.com/foraeldre/dashboard/",
         "https://app.meebook.com/foraeldre/arsplaner/",
         "https://app.meebook.com/foraeldre/ugeplaner/",
+        "https://app.meebook.com/foraeldre/meddelelsesbog/",
     ],
     "refresh_interval_minutes": 15,
     "page_settle_ms": 4000,
@@ -213,7 +214,7 @@ def mqtt_publish():
                     "identifiers": ["meebook_bridge"],
                     "name": "Meebook",
                     "manufacturer": "Meebook Bridge",
-                    "sw_version": "v1.0.14",
+                    "sw_version": "v1.0.15",
                 },
             }
             mqtt_client.publish(disc_topic, json.dumps(disc, ensure_ascii=False), qos=0, retain=True)
@@ -368,19 +369,75 @@ async def _enhance_data(page):
             serialized = json.dumps(body, ensure_ascii=False)[:2_000_000]
             state["resources"][path] = json.loads(serialized)
 
+    async def get(resource):
+        try:
+            r = await page.request.get(base + resource)
+            if r.status == 200:
+                body = await r.json()
+                store(path_of(r.url), body)
+                return body
+        except Exception:
+            pass
+        return None
+
     try:
-        latest = await page.request.get(base + "/rest/annualplans/latest")
-        if latest.status == 200:
-            body = await latest.json()
-            store(path_of(latest.url), body)
-            for item in body.get("items", []):
-                pid = item.get("id")
-                if pid:
-                    detail = await page.request.get(
-                        base + f"/rest/annualplans/{pid}?include=books%2Cactivities%2Cteacher%2Cstatuses"
-                    )
-                    if detail.status == 200:
-                        store(path_of(detail.url), await detail.json())
+        students = await get("/rest/related/students")
+        sid = None
+        if students and students.get("items"):
+            sid = students["items"][0].get("id")
+        if sid is None and state["student_ids"]:
+            sid = state["student_ids"][0]
+
+        await get("/rest/annualplanStatuses")
+        latest = await get("/rest/annualplans/latest")
+
+        year_id = None
+        ys = await get("/rest/yearSpans")
+        if ys and ys.get("items"):
+            for y in ys["items"]:
+                if y.get("currentYear"):
+                    year_id = y.get("id")
+                    break
+
+        plan_ids = set()
+        if latest and latest.get("items"):
+            for it in latest["items"]:
+                if it.get("id"):
+                    plan_ids.add(it["id"])
+        if sid and year_id:
+            lst = await get(f"/rest/annualplans?studentId={sid}&yearSpanId={year_id}")
+            if lst and lst.get("items"):
+                for it in lst["items"]:
+                    if it.get("id"):
+                        plan_ids.add(it["id"])
+
+        for pid in list(plan_ids)[:8]:
+            detail = await get(
+                f"/rest/annualplans/{pid}?include=books%2Cactivities%2Cteacher%2Cstatuses"
+            )
+            if detail and isinstance(detail, dict):
+                for book in detail.get("books", []) or []:
+                    bid = book.get("id") if isinstance(book, dict) else book
+                    if bid:
+                        await get(f"/rest/books/{bid}?include=teacher%2CannualPlan")
+                        if sid:
+                            await get(
+                                f"/rest/bookChapters?bookId={bid}&studentId={sid}&include=sections"
+                            )
+
+        if sid:
+            mbs = await get(f"/rest/messagebook/messagebooks?studentId={sid}")
+            if mbs and isinstance(mbs, dict):
+                mids = [
+                    m.get("id")
+                    for m in mbs.get("items", [])
+                    if isinstance(m, dict) and m.get("id")
+                ]
+                for mid in mids[:3]:
+                    await get(f"/rest/messagebook/messages?messagebookId={mid}&limit=10&sort=-date")
+                    await get(f"/rest/agreements?messagebookId={mid}&include=agreementType")
+                    await get(f"/rest/messagebook/participants?messagebookId={mid}")
+                    await get(f"/rest/messagebook/sections?messagebookId={mid}")
     except Exception:
         pass
 

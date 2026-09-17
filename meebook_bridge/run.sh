@@ -18,7 +18,7 @@ fi
 
 if [ -n "$HA_CONFIG" ]; then
   {
-    echo "[$(date -Is)] Meebook Bridge starter (v1.0.14)"
+    echo "[$(date -Is)] Meebook Bridge starter (v1.0.15)"
     mkdir -p "$HA_CONFIG/custom_components/meebook_bridge"
     cp -r /app/custom_components/meebook_bridge/. "$HA_CONFIG/custom_components/meebook_bridge/" 2>/tmp/cp.err && \
       echo "Integration installeret i $HA_CONFIG/custom_components/meebook_bridge" || \

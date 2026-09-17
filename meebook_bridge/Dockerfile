@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
 
 LABEL \
-    io.hass.version="1.0.14" \
+    io.hass.version="1.0.15" \
     io.hass.type="addon" \
     io.hass.arch="aarch64|amd64"
 
