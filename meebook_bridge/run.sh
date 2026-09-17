@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
+# Best-effort: installér custom integration i HA-config, hvis mappen er mountet
+# (ny Supervisor: /homeassistant, ældre: /config). Ellers sker installation
+# manuelt (se README).
 LOG=/dev/stdout
 HA_CONFIG=""
-# Ny Supervisor mapper HA-configuration til /homeassistant, ældre til /config.
 if [ -d "/homeassistant" ] && touch "/homeassistant/.mb_wtest" 2>/dev/null; then
   rm -f "/homeassistant/.mb_wtest"
   HA_CONFIG="/homeassistant"
@@ -14,22 +16,14 @@ elif [ -d "/config" ] && touch "/config/.mb_wtest" 2>/dev/null; then
   LOG="/config/meebook_bridge_install.log"
 fi
 
-{
-  echo "[$(date -Is)] Meebook Bridge starter (v1.0.11)"
-  if [ -n "$HA_CONFIG" ]; then
-    if [ -d "/app/custom_components" ]; then
-      mkdir -p "$HA_CONFIG/custom_components/meebook_bridge"
-      if cp -r /app/custom_components/meebook_bridge/. "$HA_CONFIG/custom_components/meebook_bridge/" 2>/tmp/cp.err; then
-        echo "Integration installeret i $HA_CONFIG/custom_components/meebook_bridge"
-      else
-        echo "ADVARSEL: kunne ikke kopiere integration - $(cat /tmp/cp.err)"
-      fi
-    else
-      echo "/app/custom_components mangler"
-    fi
-  else
-    echo "Ingen skrivbar HA-configuration-mappe fundet - integration installeres ikke automatisk"
-  fi
-} >> "$LOG" 2>&1 || true
+if [ -n "$HA_CONFIG" ]; then
+  {
+    echo "[$(date -Is)] Meebook Bridge starter (v1.0.12)"
+    mkdir -p "$HA_CONFIG/custom_components/meebook_bridge"
+    cp -r /app/custom_components/meebook_bridge/. "$HA_CONFIG/custom_components/meebook_bridge/" 2>/tmp/cp.err && \
+      echo "Integration installeret i $HA_CONFIG/custom_components/meebook_bridge" || \
+      echo "Kunne ikke installere integration automatisk: $(cat /tmp/cp.err)"
+  } >> "$LOG" 2>&1 || true
+fi
 
 python3 /app/app.py

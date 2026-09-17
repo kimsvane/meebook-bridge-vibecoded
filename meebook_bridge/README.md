@@ -45,25 +45,35 @@ Tip: Har du allerede logget ind med `mac/`-versionen, kan du kopiere dens
 
 ## Home Assistant-sensorer
 
-### Anbefalet: Custom integration (entuelt mod Z2M-stil)
+### Custom integration (manuel installation – anbefalet)
 
-Add-on'en installerer automatisk en **custom integration** i
-`/config/custom_components/meebook_bridge/` ved opstart. Sådan aktiveres den:
+Add-on'en serverer API'et; integrationen læser data og opretter sensorerne.
+Installér integrationen manuelt (deterministisk – kræver ingen bestemte
+Supervisor-funktioner):
 
-1. **Genstart Home Assistant** (Indstillinger → System → Genstart) – ikke kun add-on'en –
-   så HA læser den nye integration.
-2. Indstillinger → Enheder & tjenester → **Tilføj integration** → søg efter
-   **Meebook Bridge**.
-3. Angiv værtsnavn/port (standard `hassio.local:8600`). Virker `hassio.local`
-   ikke, så brug din HA's LAN-IP (fx `192.168.1.10`).
-4. Integrationen opretter så **én sensor pr. fanget endpoint** (fx
-   `sensor.meebook_annualplans_latest`, `sensor.meebook_notifications` osv.)
-   under énheden **Meebook**. Værdien er en kort sammenfatning (fx
-   "2A – Matematik"), og alle JSON-værdierne ligger som **attributter**
-   – inkl. den rå JSON i attributten `json`.
+1. Find integrationen på din Mac:
+   `/Users/kim/Documents/Default Project/meebook-bridge/meebook_bridge/custom_components/`
+2. Kopiér hele mappen `meebook_bridge/` herfra ind på HA'en under
+   `/config/custom_components/` (fx via Samba eller File-editor), så det hedder
+   `/config/custom_components/meebook_bridge/` og indeholder mindst
+   `manifest.json`, `__init__.py`, `config_flow.py` og `sensor.py`.
+3. **Genstart HELE Home Assistant** (Indstillinger → System → Genstart).
+4. Indstillinger → Enheder & tjenester → **Tilføj integration** → søg
+   **Meebook Bridge** → angiv `hassio.local:8600` (ellers din HA's LAN-IP).
+
+Integrationen opretter så **én sensor pr. fanget endpoint** (fx
+`sensor.meebook_annualplans_latest`, `sensor.meebook_notifications` osv.)
+under énheden **Meebook**. Værdien er en kort sammenfatning (fx
+"2A – Matematik"), og alle JSON-værdierne ligger som **attributter**
+– inkl. den rå JSON i attributten `json`.
 
 Da der automatisk oprettes en sensor, hver gang add-on'en fanger et nyt
 endpoint, kan du se alle tilgængelige felter direkte på enheden.
+
+> Auto-installation ved add-on-start (v1.0.12): forsøges hvis Supervisor
+> mountes HA-konfigurationen i `/homeassistant` (eller `/config`). Virker
+> det ikke, brug den manuelle installation ovenfor – add-on-logen eller
+> `/config/meebook_bridge_install.log` fortæller, hvad der skete.
 
 ### Automatisk via MQTT-discovery
 
