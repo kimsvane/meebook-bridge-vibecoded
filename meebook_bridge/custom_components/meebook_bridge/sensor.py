@@ -104,7 +104,7 @@ class MeebookResourceSensor(CoordinatorEntity, Entity):
             name="Meebook",
             manufacturer="Meebook",
             model="Bridge (HA add-on)",
-            sw_version="1.0.9",
+            sw_version="1.0.10",
         )
         self.path = path
         self._update_state()
