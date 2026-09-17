@@ -1,5 +1,5 @@
 name: "Meebook Bridge"
-version: "1.0.15"
+version: "1.0.16"
 slug: meebook_bridge
 description: >-
   Læser data fra Meebook (elevplan, lektier, fravær) ind i Home Assistant.

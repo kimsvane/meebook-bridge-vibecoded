@@ -29,6 +29,14 @@ def _short(value, limit=200):
     return value
 
 
+def _pick(d, *keys):
+    for k in keys:
+        v = d.get(k)
+        if v:
+            return v
+    return None
+
+
 def summarize(path: str, body):
     """Returner (state, attributes) for en fanget resource."""
     attrs = {"path": path}
@@ -46,6 +54,8 @@ def summarize(path: str, body):
     attrs["json"] = json.dumps(body, ensure_ascii=False, default=str)[:100_000]
 
     items = body.get("items")
+    if items is None and isinstance(body, list):
+        items = body
 
     if path == "/rest/related/students":
         if items:
@@ -83,11 +93,49 @@ def summarize(path: str, body):
                 return y.get("name", "?"), attrs
         return "?", attrs
 
+    if path == "/rest/messagebook/messagebooks":
+        n = len(items or [])
+        return f"{n} meddelelsesbøger" if n else "Ingen meddelelsesbog", attrs
+
+    if path == "/rest/messagebook/messages":
+        if not items:
+            return "Ingen beskeder", attrs
+        first = items[0]
+        sender = _pick(first, "sender", "senderName", "from") or "?"
+        text = _pick(first, "text", "content", "body", "title", "subject") or ""
+        date = _pick(first, "date", "dateTime", "created")
+        preview = _short(f"{sender}: {text}", 120)
+        return f"{len(items)} beskeder - {preview}{' (' + date + ')' if date else ''}", attrs
+
+    if path in ("/rest/messagebook/participants", "/rest/messagebook/sections"):
+        return f"{len(items or [])}", attrs
+
+    if path == "/rest/agreements":
+        return f"{len(items or [])} aftaler", attrs
+
+    if path == "/rest/annualplanStatuses":
+        return f"{len(items or [])} statusser", attrs
+
+    if path == "/rest/bookChapters":
+        return f"{len(items or [])} kapitler", attrs
+
+    m2 = re.match(r"/rest/books/(\d+)$", path)
+    if m2:
+        title = _pick(body, "title", "name") or "?"
+        return str(title), attrs
+
     m = re.match(r"/rest/annualplans/(\d+)$", path)
     if m:
-        activities = body.get("activities") or []
-        books = body.get("books") or []
+        activities = body.get("activities") or body.get("activities", {}).get("items") or []
+        books = body.get("books") or body.get("bookIds") or body.get("books", {}).get("items") or []
+        if isinstance(activities, dict):
+            activities = activities.get("items", [])
+        if isinstance(books, dict):
+            books = books.get("items", [])
         return f"{len(activities)} aktiviteter, {len(books)} bøger", attrs
+
+    if isinstance(items, list) and items:
+        return f"{len(items)} elementer", attrs
 
     return "OK", attrs
 
@@ -104,7 +152,7 @@ class MeebookResourceSensor(CoordinatorEntity, SensorEntity):
             name="Meebook",
             manufacturer="Meebook",
             model="Bridge (HA add-on)",
-            sw_version="1.0.15",
+            sw_version="1.0.16",
         )
         self.path = path
         self._apply_state()
