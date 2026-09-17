@@ -214,7 +214,7 @@ def mqtt_publish():
                     "identifiers": ["meebook_bridge"],
                     "name": "Meebook",
                     "manufacturer": "Meebook Bridge",
-                    "sw_version": "v1.0.16",
+                    "sw_version": "v1.0.17",
                 },
             }
             mqtt_client.publish(disc_topic, json.dumps(disc, ensure_ascii=False), qos=0, retain=True)
@@ -416,7 +416,8 @@ async def _enhance_data(page):
                 f"/rest/annualplans/{pid}?include=books%2Cactivities%2Cteacher%2Cstatuses"
             )
             if detail and isinstance(detail, dict):
-                for book in detail.get("books", []) or []:
+                included = detail.get("included", {}) or {}
+                for book in (included.get("book", []) or [])[:2]:
                     bid = book.get("id") if isinstance(book, dict) else book
                     if bid:
                         await get(f"/rest/books/{bid}?include=teacher%2CannualPlan")

@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import re
+from datetime import date
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
@@ -107,8 +108,14 @@ def summarize(path: str, body):
         preview = _short(f"{sender}: {text}", 120)
         return f"{len(items)} beskeder - {preview}{' (' + date + ')' if date else ''}", attrs
 
-    if path in ("/rest/messagebook/participants", "/rest/messagebook/sections"):
+    if path == "/rest/messagebook/participants":
         return f"{len(items or [])}", attrs
+
+    if path == "/rest/messagebook/sections":
+        if not items:
+            return "Ingen sektioner", attrs
+        first = items[0].get("content", {}).get("title") or "?"
+        return f"{len(items)} sektion(er) - {first}", attrs
 
     if path == "/rest/agreements":
         return f"{len(items or [])} aftaler", attrs
@@ -126,13 +133,68 @@ def summarize(path: str, body):
 
     m = re.match(r"/rest/annualplans/(\d+)$", path)
     if m:
-        activities = body.get("activities") or body.get("activities", {}).get("items") or []
-        books = body.get("books") or body.get("bookIds") or body.get("books", {}).get("items") or []
-        if isinstance(activities, dict):
-            activities = activities.get("items", [])
-        if isinstance(books, dict):
-            books = books.get("items", [])
-        return f"{len(activities)} aktiviteter, {len(books)} bøger", attrs
+        item = body.get("item", {}) or {}
+        included = body.get("included", {}) or {}
+        activities = included.get("activity", []) or []
+        books = included.get("book", []) or []
+        statuses = included.get("annualplanStatus", []) or []
+        teachers = included.get("teacher", []) or []
+
+        group = item.get("groupName", "")
+        cats = ", ".join(item.get("categories") or [])
+        title = f"{group} {cats}".strip() or "Plan"
+        teacher = teachers[0].get("name") if teachers else ""
+
+        today = date.today().isoformat()
+        upcoming = [
+            a
+            for a in activities
+            if (a.get("endDate") or a.get("startDate") or "") >= today
+        ]
+        upcoming.sort(key=lambda a: a.get("startDate") or "")
+        nxt = upcoming[0] if upcoming else None
+
+        is_read = (
+            all(s.get("isRead") for s in statuses) if statuses else None
+        )
+
+        if nxt:
+            state = f"{title} - næste: {nxt.get('title', '?')} {(nxt.get('startDate') or '')}"
+        else:
+            state = title
+
+        attrs["teacher"] = teacher
+        attrs["is_read"] = is_read
+        attrs["next_activity"] = (
+            f"{nxt.get('title')} {nxt.get('startDate')} - {nxt.get('endDate')}" if nxt else None
+        )
+        attrs["books_count"] = len(books)
+        attrs["activities_count"] = len(activities)
+        attrs["books"] = json.dumps(
+            [
+                {
+                    "title": b.get("title"),
+                    "description": b.get("description"),
+                    "startDate": b.get("startDate"),
+                    "endDate": b.get("endDate"),
+                }
+                for b in books
+            ],
+            ensure_ascii=False,
+        )
+        attrs["activities"] = json.dumps(
+            [
+                {
+                    "title": a.get("title"),
+                    "description": a.get("description"),
+                    "startDate": a.get("startDate"),
+                    "endDate": a.get("endDate"),
+                }
+                for a in activities
+            ],
+            ensure_ascii=False,
+        )
+        return state, attrs
 
     if isinstance(items, list) and items:
         return f"{len(items)} elementer", attrs
@@ -152,7 +214,7 @@ class MeebookResourceSensor(CoordinatorEntity, SensorEntity):
             name="Meebook",
             manufacturer="Meebook",
             model="Bridge (HA add-on)",
-            sw_version="1.0.16",
+            sw_version="1.0.17",
         )
         self.path = path
         self._apply_state()
