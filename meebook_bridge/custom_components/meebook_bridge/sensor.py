@@ -5,10 +5,10 @@ import json
 import logging
 import re
 
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -92,7 +92,7 @@ def summarize(path: str, body):
     return "OK", attrs
 
 
-class MeebookResourceSensor(CoordinatorEntity, Entity):
+class MeebookResourceSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, path: str) -> None:
         super().__init__(coordinator)
         digest = hashlib.sha256(path.encode()).hexdigest()[:12]
@@ -104,7 +104,7 @@ class MeebookResourceSensor(CoordinatorEntity, Entity):
             name="Meebook",
             manufacturer="Meebook",
             model="Bridge (HA add-on)",
-            sw_version="1.0.13",
+            sw_version="1.0.14",
         )
         self.path = path
         self._apply_state()
