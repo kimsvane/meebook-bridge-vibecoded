@@ -104,22 +104,22 @@ class MeebookResourceSensor(CoordinatorEntity, Entity):
             name="Meebook",
             manufacturer="Meebook",
             model="Bridge (HA add-on)",
-            sw_version="1.0.12",
+            sw_version="1.0.13",
         )
         self.path = path
-        self._update_state()
+        self._apply_state()
 
-    def _update_state(self):
+    def _apply_state(self):
         body = self.coordinator.data.get("resources", {}).get(self.path)
         if body is None:
             return
         state, attrs = summarize(self.path, body)
         self._attr_native_value = state
         self._attr_extra_state_attributes = attrs
-        self.async_write_ha_state()
 
     def _handle_coordinator_update(self) -> None:
-        self._update_state()
+        self._apply_state()
+        self.async_write_ha_state()
 
 
 async def async_setup_entry(
