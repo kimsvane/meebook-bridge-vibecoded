@@ -213,7 +213,7 @@ def mqtt_publish():
                     "identifiers": ["meebook_bridge"],
                     "name": "Meebook",
                     "manufacturer": "Meebook Bridge",
-                    "sw_version": "v1.0.10",
+                    "sw_version": "v1.0.11",
                 },
             }
             mqtt_client.publish(disc_topic, json.dumps(disc, ensure_ascii=False), qos=0, retain=True)

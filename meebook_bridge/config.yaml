@@ -1,5 +1,5 @@
 name: "Meebook Bridge"
-version: "1.0.10"
+version: "1.0.11"
 slug: meebook_bridge
 description: >-
   Læser data fra Meebook (elevplan, lektier, fravær) ind i Home Assistant.
@@ -14,7 +14,8 @@ arch:
 startup: application
 boot: auto
 init: false
-config: true
+map:
+  - homeassistant_config: rw
 mqtt: true
 hassio_api: true
 ports:
