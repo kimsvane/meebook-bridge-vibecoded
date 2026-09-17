@@ -1,11 +1,12 @@
 name: "Meebook Bridge"
-version: "1.0.7"
+version: "1.0.8"
 slug: meebook_bridge
 description: >-
   Læser data fra Meebook (elevplan, lektier, fravær) ind i Home Assistant.
   Kører en browser (Playwright) i containeren, fanger Meebooks REST-API-svar
   og eksponerer dem som JSON på port 8600 til REST-sensorer.
   Unilogin/MitID-login sker indlejret i add-on'ets web-UI (ingen VNC).
+  Sensorer oprettes automatisk via MQTT-discovery.
 url: "https://github.com/kimsvane/meebook-bridge-vibecoded"
 arch:
   - amd64
@@ -13,6 +14,8 @@ arch:
 startup: application
 boot: auto
 init: false
+mqtt: true
+hassio_api: true
 ports:
   8600/tcp: 8600
 ports_description:

@@ -4,12 +4,20 @@ import os
 import re
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import uvicorn
 from fastapi import Body, FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from playwright.async_api import async_playwright
+
+try:
+    import paho.mqtt.client as mqtt
+
+    HAS_PAHO = True
+except Exception:
+    HAS_PAHO = False
 
 BASE_DIR = Path(os.environ.get("BRIDGE_BASE", "/app"))
 DATA_DIR = Path(os.environ.get("BRIDGE_DATA", "/data"))
@@ -72,6 +80,146 @@ login_view = {
 
 snapshot_lock = asyncio.Lock()
 scheduler_task = None
+
+mqtt_client = None
+mqtt_enabled = False
+
+
+def _make_mqtt_client(client_id):
+    try:
+        return mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+    except AttributeError:
+        return mqtt.Client(client_id=client_id)
+
+
+def get_mqtt_settings():
+    host = os.environ.get("MQTT_HOST")
+    if host:
+        port = int(os.environ.get("MQTT_PORT", "1883"))
+        user = os.environ.get("MQTT_USERNAME") or os.environ.get("MQTT_USER")
+        password = os.environ.get("MQTT_PASSWORD")
+        return host, port, user, password
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return None
+    try:
+        req = urllib.request.Request(
+            "http://supervisor/services/mqtt",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = json.loads(r.read())
+        if not data.get("result"):
+            return None
+        d = data.get("data", {})
+        return d.get("host"), int(d.get("port", 1883)), d.get("username"), d.get("password")
+    except Exception:
+        return None
+
+
+def mqtt_start():
+    global mqtt_client, mqtt_enabled
+    if not HAS_PAHO:
+        return
+    settings = get_mqtt_settings()
+    if not settings:
+        return
+    host, port, user, password = settings
+    client = _make_mqtt_client("meebook_bridge")
+    if user:
+        client.username_pw_set(user, password)
+    try:
+        client.connect(host, port, 60)
+        client.loop_start()
+    except Exception:
+        return
+    mqtt_client = client
+    mqtt_enabled = True
+
+
+def sensor_values(resources):
+    out = []
+
+    body = resources.get("/rest/related/students")
+    if body and body.get("items"):
+        out.append(("elev", "Meebook Elev", body["items"][0]["name"]))
+
+    plan_names = {}
+    for k in ("/rest/annualplans/latest", "/rest/annualplans"):
+        b = resources.get(k)
+        if b:
+            for it in b.get("items", []):
+                try:
+                    plan_names[int(it["id"])] = ", ".join(it.get("categories", []) or [])
+                except (KeyError, ValueError):
+                    pass
+
+    body = resources.get("/rest/annualplans/latest")
+    if body and body.get("items"):
+        it = body["items"][0]
+        label = f"{it.get('groupName','')} - {', '.join(it.get('categories', []) or [])}"
+        out.append(("seneste_aarsplan", "Meebook Seneste Årsplan", label))
+        out.append(("aarsplaner", "Meebook Antal Årsplaner", len(body["items"])))
+
+    body = resources.get("/rest/annualplans")
+    if body and body.get("items"):
+        out.append(("aarsplaner_omraade", "Meebook Årsplaner", len(body["items"])))
+
+    body = resources.get("/rest/notifications")
+    if body and body.get("items"):
+        d = body["items"][0].get("data", {})
+        sender = d.get("senderName", "Ukendt")
+        cats = ", ".join(d.get("categories", []) or [])
+        out.append(("seneste_besked", "Meebook Seneste Besked", f"{sender} - {cats}" if cats else sender))
+        out.append(("beskeder", "Meebook Beskeder", len(body["items"])))
+
+    body = resources.get("/rest/weekplan/events")
+    if body:
+        out.append(("ugeplan_events", "Meebook Ugeplan Events", len(body.get("items", []))))
+
+    body = resources.get("/rest/yearSpans")
+    if body and body.get("items"):
+        for y in body["items"]:
+            if y.get("currentYear"):
+                out.append(("skoleaar", "Meebook Skoleår", y.get("name", "")))
+
+    for key, body in resources.items():
+        m = re.match(r"/rest/annualplans/(\d+)$", key)
+        if m and isinstance(body, dict):
+            pid = int(m.group(1))
+            acts = body.get("activities", []) or []
+            label = plan_names.get(pid, str(pid))
+            out.append((f"aarsplan_{pid}", f"Meebook Årsplan {label}", len(acts)))
+
+    return out
+
+
+def mqtt_publish():
+    global mqtt_client
+    if not mqtt_enabled or mqtt_client is None:
+        return
+    try:
+        if not mqtt_client.is_connected():
+            return
+        for key, name, value in sensor_values(state["resources"]):
+            st_topic = f"meebook/bridge/{key}"
+            disc_topic = f"homeassistant/sensor/meebook_{key}/config"
+            disc = {
+                "name": name,
+                "unique_id": f"meebook_bridge_{key}",
+                "object_id": f"meebook_bridge_{key}",
+                "state_topic": st_topic,
+                "device": {
+                    "identifiers": ["meebook_bridge"],
+                    "name": "Meebook",
+                    "manufacturer": "Meebook Bridge",
+                    "sw_version": "v1.0.8",
+                },
+            }
+            mqtt_client.publish(disc_topic, json.dumps(disc, ensure_ascii=False), qos=0, retain=True)
+            mqtt_client.publish(st_topic, value, qos=0, retain=True)
+    except Exception:
+        pass
 
 
 def save_state():
@@ -272,6 +420,7 @@ async def refresh_job():
             state["needs_login"] = False
             state["last_refresh"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             save_state()
+            mqtt_publish()
             return True
         except Exception as e:
             state["last_error"] = str(e)
@@ -361,6 +510,7 @@ button:disabled{opacity:.4}
 .status{color:#8c8;margin-left:auto}
 </style></head><body>
 <div class="bar">
+  <a href="."><button>← Tilbage</button></a>
   <button id="start" onclick="start()">Start login</button>
   <input id="txt" placeholder="Skriv tekst (fx MitID-navn)">
   <button onclick="typeText()">Skriv tekst</button>
@@ -449,6 +599,7 @@ load();setInterval(load,15000);
 @app.on_event("startup")
 async def startup():
     load_state()
+    mqtt_start()
     global scheduler_task
     loop = asyncio.get_running_loop()
     scheduler_task = loop.create_task(scheduler())
@@ -458,6 +609,8 @@ async def startup():
         try:
             if not state["needs_login"]:
                 await refresh_job()
+            else:
+                mqtt_publish()
         except Exception:
             pass
 

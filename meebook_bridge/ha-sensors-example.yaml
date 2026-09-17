@@ -1,0 +1,103 @@
+# Meebook Bridge – Home Assistant sensor-konfiguration
+# Erstat <HA_IP> med adressen på Home Assistant (fx 192.168.1.10)
+# Læg indholdet i din configuration.yaml under "rest:"
+
+rest:
+  # ------------------------------------------------------------------
+  # 1. Elev (barn der er tilknyttet din profil)
+  # ------------------------------------------------------------------
+  - resource: "http://<HA_IP>:8600/data/rest/related/students"
+    scan_interval: 3600
+    sensor:
+      - name: "Meebook Elev"
+        unique_id: meebook_elev
+        device_class: ""
+        value_template: "{{ value_json['items'][0]['name'] }}"
+        json_attributes_path: "$.items[0]"
+        json_attributes:
+          - id
+
+  # ------------------------------------------------------------------
+  # 2. Seneste årsplan (fag fra nyeste plan)
+  # ------------------------------------------------------------------
+  - resource: "http://<HA_IP>:8600/data/rest/annualplans/latest"
+    scan_interval: 300
+    sensor:
+      - name: "Meebook Seneste Årsplan"
+        unique_id: meebook_seneste_aarsplan
+        value_template: >-
+          {% if value_json.get('items') %}
+          {{ value_json['items'][0]['groupName'] }} – {{ value_json['items'][0]['categories'] | join(', ') }}
+          {% else %}
+          Ingen plan
+          {% endif %}
+        json_attributes_path: "$.items[0]"
+        json_attributes:
+          - groupName
+          - categories
+          - id
+          - yearSpanId
+          - link
+
+  # ------------------------------------------------------------------
+  # 3. Årsplan-detalje (fuld plan med bøger + aktiviteter/lektier)
+  #    – Kør /data/rest/annualplans/latest i add-on UI for at finde
+  #      det aktuelle plan-ID (fx 1502856)
+  # ------------------------------------------------------------------
+  - resource: "http://<HA_IP>:8600/data/rest/annualplans/1502856"
+    scan_interval: 300
+    sensor:
+      - name: "Meebook Årsplan Detalje"
+        unique_id: meebook_aarsplan_detalje
+        value_template: >-
+          {% set act = value_json.activities | default([]) %}
+          {{ act | length }} aktiviteter
+        json_attributes_path: "$.activities[0]"
+        json_attributes:
+          - title
+          - type
+          - description
+
+  # ------------------------------------------------------------------
+  # 4. Seneste besked / notifikation (fx "årsplan offentliggjort")
+  # ------------------------------------------------------------------
+  - resource: "http://<HA_IP>:8600/data/rest/notifications"
+    scan_interval: 300
+    sensor:
+      - name: "Meebook Seneste Besked"
+        unique_id: meebook_seneste_besked
+        value_template: >-
+          {% if value_json.get('items') %}
+          {{ value_json['items'][0]['data'].get('senderName', '') }} – {{ value_json['items'][0]['data'].get('categories', []) | join(', ') }} ({{ value_json['items'][0]['type'] }})
+          {% else %}
+          Ingen ny besked
+          {% endif %}
+        json_attributes_path: "$.items[0]"
+        json_attributes:
+          - type
+          - date
+          - link
+
+  # ------------------------------------------------------------------
+  # 5. Ugeplan – antal begivenheder/afleveringer denne uge
+  # ------------------------------------------------------------------
+  - resource: "http://<HA_IP>:8600/data/rest/weekplan/events"
+    scan_interval: 300
+    sensor:
+      - name: "Meebook Ugeplan Events"
+        unique_id: meebook_ugeplan_events
+        value_template: >-
+          {{ value_json.get('items', []) | length }} events
+
+  # ------------------------------------------------------------------
+  # 6. Notifikationer (nuværende skoleår)
+  # ------------------------------------------------------------------
+  - resource: "http://<HA_IP>:8600/data/rest/yearSpans"
+    scan_interval: 3600
+    sensor:
+      - name: "Meebook Skoleår"
+        unique_id: meebook_skoleaar
+        value_template: >-
+          {% for y in value_json['items'] %}
+            {% if y.get('currentYear') %}{{ y['name'] }}{% endif %}
+          {% endfor %}

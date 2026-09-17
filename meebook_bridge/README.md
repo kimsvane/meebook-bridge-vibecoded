@@ -45,26 +45,67 @@ Tip: Har du allerede logget ind med `mac/`-versionen, kan du kopiere dens
 
 ## Home Assistant-sensorer
 
-Tilføj i `configuration.yaml` (erstat `HA_IP`):
+### Automatisk via MQTT-discovery (anbefalet)
+
+Installér **Mosquitto broker**-add-on'en én gang. Så opretter Meebook Bridge
+automatisk disse sensorer i Home Assistant (ingen YAML nødvendig):
+
+- `sensor.meebook_elev` – barnets navn
+- `sensor.meebook_seneste_aarsplan` – seneste årsplan (fx "2A – Matematik")
+- `sensor.meebook_antal_aarsplaner` – antal planer
+- `sensor.meebook_aarsplaner` – antal planer i nuværende skoleår
+- `sensor.meebook_skoleaar` – nuværende skoleår
+- `sensor.meebook_seneste_besked` – seneste besked/notifikation
+- `sensor.meebook_beskeder` – antal beskeder
+- `sensor.meebook_ugeplan_events` – antal ugeplan-begivenheder
+- `sensor.meebook_aarsplan_<id>` – aktiviteter pr. årsplan (detalje)
+
+Sensor-værdierne opdateres ved hver refresh.
+
+### Manuel med REST-sensorer
+
+Bekræftede endpoints (med data): `/rest/related/students`, `/rest/annualplans/latest`,
+`/rest/annualplans` (detaljer: `/rest/annualplans/<id>` med lektier/aktiviteter),
+`/rest/notifications`, `/rest/weekplan/events`, `/rest/yearSpans`.
+
+Tilføj i `configuration.yaml`. Bemærk: `localhost` virker ikke – HA core og
+add-ons kører i hver sin container. Brug `http://<HA_IP>:8600/...` eller
+`http://hassio.local:8600/...`.
 
 ```yaml
 rest:
-  - resource: "http://<HA_IP>:8600/data/rest/annualplans"
+  - resource: "http://<HA_IP>:8600/data/rest/related/students"
+    scan_interval: 3600
+    sensor:
+      - name: "Meebook elev"
+        value_template: "{{ value_json['items'][0]['name'] }}"
+
+  - resource: "http://<HA_IP>:8600/data/rest/annualplans/latest"
     scan_interval: 300
     sensor:
-      - name: "Meebook årsplaner"
-        value_template: "{{ value_json | tojson }}"
+      - name: "Meebook - årsplaner"
+        value_template: "{{ value_json['items'][0]['categories'] | join(', ') }}"
 
   - resource: "http://<HA_IP>:8600/data/rest/annualplans/<planID>"
     scan_interval: 300
     sensor:
-      - name: "Meebook lektier"
-        value_template: "{{ value_json.activities | tojson }}"
+      - name: "Meebook - plan (lektier/aktiviteter)"
+        value_template: "{{ (value_json.activities | default([])) | length }} aktiviteter"
+
+  - resource: "http://<HA_IP>:8600/data/rest/notifications"
+    scan_interval: 300
+    sensor:
+      - name: "Meebook - seneste besked"
+        value_template: "{{ value_json['items'][0]['data']['senderName'] }}"
+
+  - resource: "http://<HA_IP>:8600/data/rest/weekplan/events"
+    scan_interval: 300
+    sensor:
+      - name: "Meebook - ugeplan events"
+        value_template: "{{ value_json['items'] | length }}"
 ```
 
-Find de relevante endpoints under **add-on'ets web-interface** (sidepanel):
-alle fangede `/rest/...`-URL'er er listet med link, og `/health` viser
-elev-ID og årsplan-ID automatisk.
+Find plan-ID'et i `/rest/annualplans/latest`-svaret under **Se data (JSON)**.
 
 ## Indstillinger (Options)
 
