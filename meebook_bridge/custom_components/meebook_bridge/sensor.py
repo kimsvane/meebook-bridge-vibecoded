@@ -214,22 +214,82 @@ class MeebookResourceSensor(CoordinatorEntity, SensorEntity):
             name="Meebook",
             manufacturer="Meebook",
             model="Bridge (HA add-on)",
-            sw_version="1.0.17",
+            sw_version="1.0.18",
         )
         self.path = path
         self._apply_state()
 
     def _apply_state(self):
-        body = self.coordinator.data.get("resources", {}).get(self.path)
+        body = self.coordinator.data.get("resources", {}).get(self.path) if self.coordinator.data else None
         if body is None:
             return
-        state, attrs = summarize(self.path, body)
+        try:
+            state, attrs = summarize(self.path, body)
+        except Exception as err:  # noqa: BLE001 - en ressource må ikke tage hele platformen ned
+            _LOGGER.error("Fejl i summarize(%s): %s", self.path, err)
+            state = "Fejl"
+            attrs = {"error": str(err)}
         self._attr_native_value = state
         self._attr_extra_state_attributes = attrs
 
     def _handle_coordinator_update(self) -> None:
-        self._apply_state()
-        self.async_write_ha_state()
+        try:
+            self._apply_state()
+        finally:
+            self.async_write_ha_state()
+
+
+class MeebookStatusSensor(CoordinatorEntity, SensorEntity):
+    """Viser om add-on'en kan nås og hvorfor ikke."""
+
+    _attr_has_entity_name = False
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = "meebook_bridge_status"
+        self._attr_name = "Meebook Status"
+        self._attr_icon = "mdi:cloud-alert"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, "meebook_bridge")},
+            name="Meebook",
+            manufacturer="Meebook",
+            model="Bridge (HA add-on)",
+            sw_version="1.0.18",
+        )
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def native_value(self):
+        return "OK" if self.coordinator.last_update_success else "Fejl"
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data or {}
+        resources = data.get("resources", {})
+        try:
+            base = self.coordinator.base_url
+        except AttributeError:
+            base = "?"
+        return {
+            "base_url": base,
+            "addon_kontakt": "OK" if self.coordinator.last_update_success else "FEJL",
+            "sidste_fejl": str(self.coordinator.last_exception or "")
+            or "ingen",
+            "antal_resources": len(resources),
+            "sidste_opdatering": str(self.coordinator.last_update_success),
+        }
+
+    def _handle_coordinator_update(self) -> None:
+        try:
+            self._apply_state()
+        finally:
+            self.async_write_ha_state()
+
+    def _apply_state(self) -> None:
+        pass
 
 
 async def async_setup_entry(
@@ -255,3 +315,4 @@ async def async_setup_entry(
 
     coordinator.async_add_listener(_listener)
     _create_entities()
+    async_add_entities([MeebookStatusSensor(coordinator)])

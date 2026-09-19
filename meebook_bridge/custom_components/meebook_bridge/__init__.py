@@ -7,7 +7,6 @@ from datetime import timedelta
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -41,7 +40,7 @@ class MeebookCoordinator(DataUpdateCoordinator):
                 self._async_get_json(self.base_url + "/health"),
             )
         except Exception as err:
-            raise UpdateFailed(f"Kan ikke nå add-on'en: {err}") from err
+            raise UpdateFailed(f"{self.base_url} - {err}") from err
         return {"resources": resources or {}, "health": health}
 
 
@@ -52,7 +51,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await coordinator.async_config_entry_first_refresh()
     except UpdateFailed as err:
-        raise ConfigEntryNotReady(str(err)) from err
+        _LOGGER.exception("Meebook Bridge - første opdatering mislykkedes: %s", err)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
