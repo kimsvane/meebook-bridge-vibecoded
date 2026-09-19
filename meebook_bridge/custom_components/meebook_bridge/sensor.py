@@ -104,9 +104,9 @@ def summarize(path: str, body):
         first = items[0]
         sender = _pick(first, "sender", "senderName", "from") or "?"
         text = _pick(first, "text", "content", "body", "title", "subject") or ""
-        date = _pick(first, "date", "dateTime", "created")
+        msg_date = _pick(first, "date", "dateTime", "created")
         preview = _short(f"{sender}: {text}", 120)
-        return f"{len(items)} beskeder - {preview}{' (' + date + ')' if date else ''}", attrs
+        return f"{len(items)} beskeder - {preview}{' (' + msg_date + ')' if msg_date else ''}", attrs
 
     if path == "/rest/messagebook/participants":
         return f"{len(items or [])}", attrs
@@ -128,7 +128,8 @@ def summarize(path: str, body):
 
     m2 = re.match(r"/rest/books/(\d+)$", path)
     if m2:
-        title = _pick(body, "title", "name") or "?"
+        item = body.get("item", {}) or {}
+        title = _pick(body, "title", "name") or _pick(item, "title", "name") or "?"
         return str(title), attrs
 
     m = re.match(r"/rest/annualplans/(\d+)$", path)
@@ -214,7 +215,7 @@ class MeebookResourceSensor(CoordinatorEntity, SensorEntity):
             name="Meebook",
             manufacturer="Meebook",
             model="Bridge (HA add-on)",
-            sw_version="1.0.18",
+            sw_version="1.0.19",
         )
         self.path = path
         self._apply_state()
@@ -254,7 +255,7 @@ class MeebookStatusSensor(CoordinatorEntity, SensorEntity):
             name="Meebook",
             manufacturer="Meebook",
             model="Bridge (HA add-on)",
-            sw_version="1.0.18",
+            sw_version="1.0.19",
         )
 
     @property
